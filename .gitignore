@@ -6,3 +6,4 @@ test_output2.txt
 debug_*.py
 .coverage
 htmlcov/
+*.jsonl

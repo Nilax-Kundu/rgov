@@ -1,154 +1,170 @@
 """
-CPU Policy State Machine (v0)
+Core Policy Logic.
 
-This module implements the deterministic CPU policy state machine for rgov v0.
+This module defines the pure function that maps (State, Observation, Budget) -> (Enforcement).
+It implements the state machine and transition rules.
 
-Guarantees:
-- Deterministic state transitions
-- Invariant preservation (P1-P6)
-- No system calls, no clocks, no kernel interaction
-- Pure computation only
-
-Spec References:
-- SPEC.md §4.3 (CPU Policy State Machine)
-- INVARIANTS.md §4 (Policy State Invariants)
+Spec Reference: v0.md (Policy)
+v3.md (Observability - DecisionRecord)
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple
+from typing import Optional, Tuple
 
-
-class PolicyState(Enum):
-    """Policy state enum per SPEC.md §4.3"""
-    NORMAL = "Normal"
-    THROTTLED = "Throttled"
-
+class PolicyState(str, Enum):
+    NORMAL = "NORMAL"
+    THROTTLED = "THROTTLED"
 
 @dataclass(frozen=True)
 class PolicyStateData:
     """
-    Policy state variables per SPEC.md §4.3
+    Pure data container for policy state.
     
-    Invariants:
-    - P1: debt >= 0 (non-negative debt)
-    - P5: state == NORMAL => debt == 0 (normal-state cleanliness)
+    Attributes:
+        mode: Current mode (NORMAL, THROTTLED)
+        debt_us: Accumulated debt in microseconds
+        last_decision_time: Timestamp of last decision (for debug/logging only, not logic)
     """
-    state: PolicyState
-    debt: int  # microseconds, must be >= 0
+    mode: PolicyState 
+    debt_us: int
+    last_decision_time: float
     
-    def __post_init__(self):
-        """Assert invariants on construction"""
-        # P1: Non-negative debt
-        assert self.debt >= 0, f"Invariant P1 violated: debt={self.debt} < 0"
-        
-        # P5: Normal-state cleanliness
-        if self.state == PolicyState.NORMAL:
-            assert self.debt == 0, f"Invariant P5 violated: state=NORMAL but debt={self.debt} != 0"
+    # Backward compatibility properties if needed
+    @property
+    def state(self) -> PolicyState:
+        return self.mode
 
+    @property
+    def debt(self) -> int:
+        return self.debt_us
 
 @dataclass(frozen=True)
 class EnforcementDecision:
     """
-    Enforcement decision for a single window
+    Output of the policy function.
     
-    Invariants:
-    - P2: 0 <= T_w <= B (budget bound)
+    Attributes:
+        T_w: Enforced quota for next window (microseconds).
     """
-    T_w: int  # enforced quota in microseconds
-    
-    def __post_init__(self):
-        """Assert invariants on construction"""
-        # P2 partial check: T_w >= 0 (budget bound upper check requires B, done in evaluate_policy)
-        assert self.T_w >= 0, f"Invariant P2 violated: T_w={self.T_w} < 0"
+    T_w: int
 
-
-def evaluate_policy(
-    current_state: PolicyStateData,
-    U_w: int,
-    B: int,
-    W: int  # symbolic constant, carried through but not used numerically
-) -> Tuple[PolicyStateData, EnforcementDecision]:
+@dataclass(frozen=True)
+class DecisionRecord:
     """
-    Evaluate policy for one enforcement window.
+    Structural record of a policy decision.
+    Captures inputs, outputs, and the rule that fired.
     
-    This is the core deterministic state transition function.
-    
-    Args:
-        current_state: Current policy state
-        U_w: Observed CPU usage in this window (microseconds)
-        B: Declared budget (microseconds per window)
-        W: Enforcement window size (symbolic constant, microseconds)
-    
-    Returns:
-        Tuple of (next_state, enforcement_decision)
-    
-    Invariants preserved:
-        - P1: debt >= 0
-        - P2: 0 <= T_w <= B
-        - P3: No throttling without excess (throttle only when debt > 0)
-        - P4: Debt decreases only when U_w < B
-        - P5: state == NORMAL => debt == 0
-        - P6: Deterministic transitions (identical inputs => identical outputs)
-    
-    Spec References:
-        - SPEC.md §4.3
-        - INVARIANTS.md §4
-    
-    Forbidden:
-        - No system calls
-        - No clocks or timers
-        - No nondeterministic branching
-        - No heuristics
+    Spec Reference: v3.md §1
+    Invariant: Fields must be directly emitted by policy logic.
     """
-    # Validate inputs
-    assert U_w >= 0, f"Invalid input: U_w={U_w} < 0"
-    assert B > 0, f"Invalid input: B={B} <= 0"
-    assert W > 0, f"Invalid input: W={W} <= 0"
+    # Context
+    window_index: Optional[int] 
     
-    # Calculate excess or deficit for this window
-    excess = U_w - B
+    # Inputs
+    state_before: PolicyStateData
+    debt_before: int
+    usage_us: int
+    budget_us: int
     
-    # Update debt based on current window
-    if excess > 0:
-        # Overshoot: accumulate debt
-        new_debt = current_state.debt + excess
-    elif excess < 0:
-        # Undershoot: pay down debt (P4: debt decreases only when U_w < B)
-        deficit = -excess
-        new_debt = max(0, current_state.debt - deficit)
-    else:
-        # Exactly at budget: debt unchanged
-        new_debt = current_state.debt
+    # Outputs
+    enforced_quota: int
+    state_after: PolicyStateData
+    debt_after: int
     
-    # Determine next state and enforcement decision
-    # P3 refinement: Throttle is a function of debt, not directly of U_w
-    # Throttling occurs only when debt > 0
-    if new_debt > 0:
-        # We have outstanding debt: throttle
-        next_state_enum = PolicyState.THROTTLED
-        # Throttle to zero quota
-        T_w = 0
-    else:
-        # No debt: normal operation
-        next_state_enum = PolicyState.NORMAL
-        # Allow full budget
-        T_w = B
-    
-    # P2: Budget bound check
-    assert 0 <= T_w <= B, f"Invariant P2 violated: T_w={T_w} not in [0, {B}]"
-    
-    # Construct next state (invariants checked in __post_init__)
-    next_state = PolicyStateData(state=next_state_enum, debt=new_debt)
-    decision = EnforcementDecision(T_w=T_w)
-    
-    return next_state, decision
+    # Reasoning (Mechanical)
+    policy_rule_id: str
+    violated_invariant: Optional[str] = None
 
 
 def initial_state() -> PolicyStateData:
+    """Create initial policy state (Normal, 0 debt)."""
+    return PolicyStateData(mode=PolicyState.NORMAL, debt_us=0, last_decision_time=0.0)
+
+
+def evaluate_policy(
+    state: PolicyStateData, 
+    U_w: int, 
+    B: int, 
+    W: int
+) -> Tuple[PolicyStateData, EnforcementDecision, DecisionRecord]:
     """
-    Create initial policy state.
+    Pure policy function.
     
-    Initial state is always NORMAL with zero debt per P5.
+    Args:
+        state: Current state.
+        U_w: Measured usage in previous window.
+        B: Target budget.
+        W: Window size (physical).
+        
+    Returns:
+        (NewState, EnforcementDecision, DecisionRecord)
     """
-    return PolicyStateData(state=PolicyState.NORMAL, debt=0)
+    # Validate inputs (Assertion P1/P2 guards)
+    assert U_w >= 0, f"Invalid input: U_w={U_w}"
+    assert B > 0, f"Invalid input: B={B}"
+    
+    state_mode = state.mode
+    
+    # 1. Calculate inputs
+    excess = U_w - B
+    
+    # 2. Transition Logic
+    # Rule: Normal Mode
+    if state_mode == PolicyState.NORMAL:
+        if excess <= 0:
+            # Rule N1: Under-budget. No change.
+            new_debt = 0 
+            new_mode = PolicyState.NORMAL
+            enforced = B
+            rule_id = "RULE_N1_UNDER_BUDGET"
+            invariant = None
+        else:
+            # Rule N2: Over-budget. 
+            new_debt = excess
+            new_mode = PolicyState.THROTTLED
+            enforced = 0
+            rule_id = "RULE_N2_OVER_BUDGET"
+            invariant = "INV_USAGE_EXCEEDS_BUDGET"
+            
+    # Rule: Throttled Mode
+    else: # THROTTLED
+        repayment = B - U_w
+        new_debt = state.debt_us - repayment
+        
+        if new_debt <= 0:
+            # Rule T1: Debt Recovered
+            new_debt = 0
+            new_mode = PolicyState.NORMAL
+            enforced = B
+            rule_id = "RULE_T1_DEBT_RECOVERED"
+            invariant = None
+        else:
+            # Rule T2: Still in Debt
+            new_mode = PolicyState.THROTTLED
+            enforced = 0
+            rule_id = "RULE_T2_STILL_IN_DEBT"
+            invariant = "INV_DEBT_REMAINING"
+            
+    # 3. Construct Output
+    next_state = PolicyStateData(
+        mode=new_mode,
+        debt_us=new_debt,
+        last_decision_time=0.0 
+    )
+    decision = EnforcementDecision(T_w=enforced)
+    
+    record = DecisionRecord(
+        window_index=None, 
+        state_before=state,
+        debt_before=state.debt_us,
+        usage_us=U_w,
+        budget_us=B,
+        enforced_quota=enforced,
+        state_after=next_state,
+        debt_after=new_debt,
+        policy_rule_id=rule_id,
+        violated_invariant=invariant
+    )
+    
+    return next_state, decision, record

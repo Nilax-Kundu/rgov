@@ -73,7 +73,7 @@ class WindowOrchestrator:
         self._policy_state = initial_state()
         self._history: List[WindowRecord] = []
     
-    def advance_window(self, U_w: int) -> Tuple[PolicyStateData, EnforcementDecision]:
+    def advance_window(self, U_w: int) -> Tuple[PolicyStateData, EnforcementDecision, 'DecisionRecord']:
         """
         Advance one enforcement window.
         
@@ -83,7 +83,7 @@ class WindowOrchestrator:
             U_w: Observed CPU usage for this window (microseconds)
         
         Returns:
-            Tuple of (next_policy_state, enforcement_decision)
+            Tuple of (next_policy_state, enforcement_decision, decision_record)
         
         Invariants:
             - T2: Policy evaluated exactly once per window
@@ -92,27 +92,28 @@ class WindowOrchestrator:
         assert U_w >= 0, f"Invalid U_w: {U_w}"
         
         # T2: Evaluate policy exactly once per window
-        next_state, decision = evaluate_policy(
-            current_state=self._policy_state,
+        next_state, decision, record = evaluate_policy(
+            state=self._policy_state,
             U_w=U_w,
             B=self._B,
             W=self._W
         )
         
         # Record this window (for logging/replay per SPEC.md §6.2)
-        record = WindowRecord(
+        # Note: WindowRecord is v0 specific structure. We might want to augment it later.
+        window_record = WindowRecord(
             window_index=self._window_index,
             state=self._policy_state,  # state at START of window
             U_w=U_w,
             T_w=decision.T_w
         )
-        self._history.append(record)
+        self._history.append(window_record)
         
         # Update state for next window
         self._policy_state = next_state
         self._window_index += 1
         
-        return next_state, decision
+        return next_state, decision, record
     
     def get_history(self) -> List[WindowRecord]:
         """

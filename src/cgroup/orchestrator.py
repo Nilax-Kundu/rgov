@@ -10,11 +10,13 @@ Spec References:
 
 import time
 import logging
-from typing import Optional
+from typing import Optional, Tuple
 
 from .cpu import write_cpu_quota
 from .observation import WindowedObserver
-from window import WindowOrchestrator, WindowRecord
+from window import WindowOrchestrator
+from policy import PolicyStateData, DecisionRecord
+from json_logger import setup_json_logger, log_decision
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -51,6 +53,12 @@ class CgroupOrchestrator:
         self._observer = WindowedObserver(cgroup_path)
         self._policy_orch = WindowOrchestrator(B, W_us)
         
+        # v3: Structured Logging
+        self._trace_logger = setup_json_logger(name="rgov.trace.v1", log_file="rgov_v1_trace.jsonl")
+        
+        # v3: State Query
+        self._last_record = None
+        
     def run_loop(self, max_windows: Optional[int] = None) -> None:
         """
         Run the orchestration loop.
@@ -86,34 +94,22 @@ class CgroupOrchestrator:
             U_w = self._observer.measure_window()
             
             # 3. Policy Evaluation
-            next_state, decision = self._policy_orch.advance_window(U_w)
+            next_state, decision, record = self._policy_orch.advance_window(U_w)
+            
+            # v3: Structured Logging
+            # WindowOrchestrator increments index AFTER this call (internally).
+            # So get_current_window_index() returns NEXT index.
+            # We want the index corresponding to THIS decision.
+            # wait, advance_window implements: `self._window_index += 1`.
+            # So current index is indeed index + 1 relative to the just-processed window.
+            # Correct logic: index = self._policy_orch.get_current_window_index() - 1
+            current_window_index = self._policy_orch.get_current_window_index() - 1
+            log_decision(self._trace_logger, record, override_window_index=current_window_index)
+            
+            # v3: State Query
+            self._last_record = record
             
             # 4. Enforce
-            # Period is usually W, but technically defined by policy?
-            # In v1 checklist: "Writes cpu.max with $quota $period"
-            # We use W as period constant.
-            
-            # Handle unlimited/throttled quota translation
-            quota_to_write = decision.T_w if decision.T_w < self._B else None
-            # WAIT: If T_w == B, do we write None ("max")?
-            # v0 policy returns T_w = B for Normal.
-            # v1 checklist: "cpu.max = 'max <period>' means unlimited".
-            # If we write T_w=B (e.g. 100ms/100ms), that is NOT unlimited. It is capped at 100% CPU.
-            # While "max" allows >100% if multiple CPUs?
-            # CPU controller `cpu.max`: "max 100000" means unconstrained.
-            # "100000 100000" means capped at 1 CPU.
-            # Our policy manages a SINGLE workload on a BUDGET.
-            # If Budget B = 1 CPU, then T_w=B IS the limit.
-            # We should strictly enforce T_w.
-            # So `quota_us = decision.T_w`.
-            # UNLESS decision.T_w is explicitly a sentinel for unlimited?
-            # v0 policy does not support unlimited sentinel. It supports [0, B].
-            # So strictly: we enforce T_w.
-            # Only if T_w was somehow None (not possible in v0 type hint) would we write max.
-            # BUT, the checklist says: "cpu.max = 'max <period>' means unlimited".
-            # This might be for "shutdown" or "startup"?
-            # For run_loop, we just enforce T_w.
-            
             write_cpu_quota(self._cgroup_path, decision.T_w, self._W_us)
             
             windows_processed += 1
@@ -122,14 +118,27 @@ class CgroupOrchestrator:
             next_wake += self._W_sec
             
             # 6. Anti-Spin / Bounded Lag Logic
-            # If we are effectively "catch-up looping" (next_wake is already past),
-            # we must shift phase to avoid spinning.
             if next_wake < time.time():
                 lag = time.time() - next_wake
-                # How many windows did we miss?
                 missed = int(lag / self._W_sec) + 1
                 if missed > 0:
                     logger.warning(f"Lag implies {missed} skipped windows. Realigning.")
-                    # We shift next_wake forward.
-                    # We do NOT run policy for skipped windows (Usage aggregated in next real window)
                     next_wake += missed * self._W_sec
+                    
+    def get_status(self) -> Tuple[PolicyStateData, Optional[DecisionRecord]]:
+        """
+        Query current status (state and last decision).
+        Note: WindowOrchestrator does not expose state directly via get_state().
+        """
+        # We need to access PolicyStateData from WindowOrchestrator
+        # WindowOrchestrator has `_policy_state` (private).
+        # We should expose it or use `get_history()[-1]`?
+        # `get_history` returns WindowRecord (v0), not PolicyStateData.
+        # But `_last_record` has `state_after`.
+        # If no record yet, return initial state?
+        if self._last_record:
+            return self._last_record.state_after, self._last_record
+        else:
+             # Initial state
+             from policy import initial_state
+             return initial_state(), None
