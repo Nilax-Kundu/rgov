@@ -1,3 +1,20 @@
+[project]
+name = "rgov"
+version = "3.0.0"
+description = "A deterministic, constitutional workload governor"
+authors = [
+    {name = "Nilax"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

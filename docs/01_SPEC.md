@@ -16,7 +16,8 @@ rgov is a **user-space resource governor** that enforces **deterministic, declar
 
 rgov prioritizes:
 - determinism of decisions
-- bounded behavior
+- Bounded behavior
+  Enforcement delay and resource overshoot are explicitly bounded by the enforcement window (W). All corrections occur at window boundaries, ensuring that cumulative drift cannot grow indefinitely.
 - replayability
 - explainability
 
@@ -166,6 +167,9 @@ rgov does not guarantee:
 - No cross-workload policy exists
 - Interaction occurs only via kernel enforcement
 
+### 5.1 Capacity Bound
+Total declared CPU budget across all workloads must be $\le$ system capacity. System capacity is defined as the total schedulable CPU time available to the relevant cgroup hierarchy.
+
 Capacity checks are global and **pre-enforcement**.
 
 Oversubscribed configurations are invalid and must be rejected or reported explicitly.
@@ -198,9 +202,11 @@ Replay divergence is a correctness failure.
 ### 6.2 Logging Requirements
 
 At minimum, rgov must be able to log:
+- `window_index`
+- `U_w` (observed usage)
+- `T_w` (enforced quota)
 
-(window_index, state, debt, U_w, T_w)
-
+v3 implementations may log additional structured fields (e.g., Decision Records) provided replay sufficiency is preserved.
 
 Logs must be sufficient to replay decisions offline.
 
