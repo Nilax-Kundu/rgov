@@ -1,4 +1,8 @@
-# Post-Mortem Architectural Review: rgov
+# Post-Mortem Architectural Review (Non-Normative)
+
+This document is a post-mortem architectural evaluation written in an external-review style.
+It does not define requirements, guarantees, or behavior.
+In case of conflict, this document has no authority.
 
 ## 1. Executive Summary
 rgov v3 is a technically sovereign system. It succeeds by rejecting the "Resource Management" trap and strictly adhering to "Resource Governance." By enforcing declarative contracts through a deterministic state machine and verifiable cgroup bindings, it achieves a level of mechanical honesty rarely found in infrastructure tools.
@@ -28,4 +32,4 @@ rgov is **finished**.
 It is not a Swiss Army knife; it is a **Torque Wrench**. It does one thing with extreme precision and refuses to be used for anything else. Pushing this to GitHub marks the archive of a system that serves as a benchmark for how to build "Honest Infrastructure."
 
 ---
-*Reviewer: Antigravity*
+*Reviewer: rgov maintainer*
