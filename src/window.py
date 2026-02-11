@@ -100,7 +100,6 @@ class WindowOrchestrator:
         )
         
         # Record this window (for logging/replay per SPEC.md §6.2)
-        # Note: WindowRecord is v0 specific structure. We might want to augment it later.
         window_record = WindowRecord(
             window_index=self._window_index,
             state=self._policy_state,  # state at START of window

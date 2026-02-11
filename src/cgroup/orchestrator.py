@@ -97,12 +97,6 @@ class CgroupOrchestrator:
             next_state, decision, record = self._policy_orch.advance_window(U_w)
             
             # v3: Structured Logging
-            # WindowOrchestrator increments index AFTER this call (internally).
-            # So get_current_window_index() returns NEXT index.
-            # We want the index corresponding to THIS decision.
-            # wait, advance_window implements: `self._window_index += 1`.
-            # So current index is indeed index + 1 relative to the just-processed window.
-            # Correct logic: index = self._policy_orch.get_current_window_index() - 1
             current_window_index = self._policy_orch.get_current_window_index() - 1
             log_decision(self._trace_logger, record, override_window_index=current_window_index)
             
@@ -128,14 +122,7 @@ class CgroupOrchestrator:
     def get_status(self) -> Tuple[PolicyStateData, Optional[DecisionRecord]]:
         """
         Query current status (state and last decision).
-        Note: WindowOrchestrator does not expose state directly via get_state().
         """
-        # We need to access PolicyStateData from WindowOrchestrator
-        # WindowOrchestrator has `_policy_state` (private).
-        # We should expose it or use `get_history()[-1]`?
-        # `get_history` returns WindowRecord (v0), not PolicyStateData.
-        # But `_last_record` has `state_after`.
-        # If no record yet, return initial state?
         if self._last_record:
             return self._last_record.state_after, self._last_record
         else:
